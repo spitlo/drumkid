@@ -60,12 +60,13 @@ Bounce buttons[6];
 #define NUM_LEDS 5
 #define NUM_BUTTONS 6
 #define NUM_SAMPLES 5
-#define NUM_PARAM_GROUPS 4
+#define NUM_PARAM_GROUPS 1
 #define SAVED_STATE_SLOT_BYTES 24
 #define NUM_TAP_TIMES 8
 #define MAX_BEATS_PER_BAR 8
 #define MIN_SWING 0.5
 #define MAX_SWING 0.75
+#define TIME_SIGNATURE 64
 
 // Define pin numbers
 // Keep pin 9 for audio, but others can be changed to suit your breadboard layout
@@ -105,26 +106,21 @@ bool newStateLoaded = false;
 byte activeBank = 0;
 byte activeMidiSettingsNum = 0;
 
-// tempo variables
+// Tempo variables
 float tapTimes[NUM_TAP_TIMES];
 byte nextTapIndex = 0;
 
-// parameter variables, each with a range of 0-255 unless otherwise noted
-byte paramChance;
-byte paramZoom;
+// Parameter variables, each with a range of 0-255 unless otherwise noted
+byte paramRandom;
 int paramMidpoint;  // -255 to 255
 int paramRange;     // 0 to 510
-byte paramPitch;
-byte paramCrush;
-byte paramCrop;
-byte paramDrop;
 byte paramBeat;           // 0 to 23 (24 beats in total)
 byte paramTimeSignature;  // 1 to 13 (3/4, 4/4, 5/4, 6/4, 7/4)
 float paramTempo;
 byte paramSwing = 0;  // 0 to 2 (0=straight, 1=approx quintuplet swing, 2=triplet swing)
 
 // special global variables needed for certain parameters
-byte crushCompensation;
+// byte crushCompensation;
 byte previousBeat;
 byte previousTimeSignature;
 
@@ -137,20 +133,9 @@ byte previousTimeSignature;
 
 // define which knob controls which parameter
 // e.g. 0 is group 1 knob 1, 6 is group 2 knob 3
-#define CHANCE 0
-#define ZOOM 1
-#define RANGE 2
-#define MIDPOINT 3
-
-#define PITCH 4
-#define CRUSH 5
-#define CROP 6
-#define DROP 7
-
-#define BEAT 12
-#define TIME_SIGNATURE 13
-#define SWING 14
-#define TEMPO 15
+#define SWING 0
+#define TEMPO 1
+#define RANDOM 2
 
 // define root notes
 float rootNotes[13] = {
@@ -169,15 +154,6 @@ float rootNotes[13] = {
   277.182631f,
 };
 
-// determines whether each sample is played or muted in a particular drop mode
-byte dropRef[NUM_SAMPLES] = {
-  B00011110,  // kick
-  B11111000,  // hat
-  B00110000,  // snare
-  B01111000,  // rim
-  B00011100,  // tom
-};
-
 void setup() {
   byte i;
 
@@ -191,13 +167,13 @@ void setup() {
   randSeed((long)analogRead(4) * analogRead(5));  // A4 and A5 should be floating, use to seed random numbers
   startMozzi(CONTROL_RATE);
 
-  // initialise all buttons using Bounce2 library
+  // Initialise all buttons using Bounce2 library
   for (i = 0; i < NUM_BUTTONS; i++) {
     buttons[i].interval(25);
     buttons[i].attach(buttonPins[i], INPUT_PULLUP);
   }
 
-  // set starting values for each parameter
+  // Set starting values for each parameter
   resetSessionToDefaults();
 
   Serial.begin(31250);    // begin serial communication for MIDI input/output
@@ -224,58 +200,56 @@ void updateControl() {
     bitWrite(buttonsPressed, i, !buttons[i].read());
     buttonGroup = buttonsPressed | buttonGroup;
   }
-  if (buttonsPressed != lastButtonsPressed) {
-    if (menuState == 0) {
-      // Start/stop
-      if (buttons[0].fell()) {
-        if (!beatPlaying) {
-          startBeat();
-        } else {
-          stopBeat();
-        }
-      }
 
-      // Tap tempo
-      if (buttons[5].fell()) {
-        tapTimes[nextTapIndex] = (float)millis();
-
-        float firstTime;
-        float timeTally = 0.0;
-        byte validTimes = 0;
-        bool keepChecking = true;
-        for (i = 0; i < NUM_TAP_TIMES - 1 && keepChecking; i++) {
-          byte thisTapIndex = (nextTapIndex + NUM_TAP_TIMES - i) % NUM_TAP_TIMES;
-          byte lastTapIndex = (nextTapIndex + NUM_TAP_TIMES - i - 1) % NUM_TAP_TIMES;
-
-          float thisTime = tapTimes[thisTapIndex] - tapTimes[lastTapIndex];
-          if (i == 0) {
-            firstTime = thisTime;
-          }
-          float timeCompare = firstTime / thisTime;
-          if (tapTimes[lastTapIndex] > 0.0 && timeCompare > 0.8 && timeCompare < 1.2) {
-            timeTally += thisTime;
-            validTimes++;
-          } else {
-            keepChecking = false;
-          }
-        }
-        if (validTimes >= 2) {
-          float newPulseLength = (timeTally / validTimes) / 24;
-          paramTempo = 2500.0 / newPulseLength;
-          storedValues[TEMPO] = tempoToByte(paramTempo);
-        }
-        nextTapIndex = (nextTapIndex + 1) % NUM_TAP_TIMES;
-
-        if (controlSet == TEMPO / NUM_KNOBS) {
-          byte tempoKnobNum = TEMPO % NUM_KNOBS;
-          bitWrite(knobLocked, tempoKnobNum, true);
-          initValues[tempoKnobNum] = analogValues[tempoKnobNum];
-        }
-      }
-
-      controlSet = 3;
+  // Start/stop
+  if (buttons[0].fell()) {
+    if (!beatPlaying) {
+      startBeat();
+    } else {
+      stopBeat();
     }
   }
+
+  // Tap tempo
+  if (buttons[5].fell()) {
+    tapTimes[nextTapIndex] = (float)millis();
+
+    float firstTime;
+    float timeTally = 0.0;
+    byte validTimes = 0;
+    bool keepChecking = true;
+    for (i = 0; i < NUM_TAP_TIMES - 1 && keepChecking; i++) {
+      byte thisTapIndex = (nextTapIndex + NUM_TAP_TIMES - i) % NUM_TAP_TIMES;
+      byte lastTapIndex = (nextTapIndex + NUM_TAP_TIMES - i - 1) % NUM_TAP_TIMES;
+
+      float thisTime = tapTimes[thisTapIndex] - tapTimes[lastTapIndex];
+      if (i == 0) {
+        firstTime = thisTime;
+      }
+      float timeCompare = firstTime / thisTime;
+      if (tapTimes[lastTapIndex] > 0.0 && timeCompare > 0.8 && timeCompare < 1.2) {
+        timeTally += thisTime;
+        validTimes++;
+      } else {
+        keepChecking = false;
+      }
+    }
+    if (validTimes >= 2) {
+      float newPulseLength = (timeTally / validTimes) / 24;
+      paramTempo = 2500.0 / newPulseLength;
+      storedValues[TEMPO] = tempoToByte(paramTempo);
+    }
+    nextTapIndex = (nextTapIndex + 1) % NUM_TAP_TIMES;
+
+    // Investigate this
+    if (controlSet == TEMPO / NUM_KNOBS) {
+      byte tempoKnobNum = TEMPO % NUM_KNOBS;
+      bitWrite(knobLocked, tempoKnobNum, true);
+      initValues[tempoKnobNum] = analogValues[tempoKnobNum];
+    }
+  }
+
+  controlSet = 0;
 
   lastButtonsPressed = buttonsPressed;
   controlSetChanged = (prevControlSet != controlSet);
@@ -352,90 +326,46 @@ void doPulseActions() {
 }
 
 void setDefaults() {
-  paramChance = storedValues[CHANCE];
-  paramZoom = storedValues[ZOOM];
-  paramRange = 2 * storedValues[RANGE];
-  paramMidpoint = 2 * storedValues[MIDPOINT] - 255;
+  paramRandom = storedValues[RANDOM];
+  paramRange = 300;
+  paramMidpoint = 0;
 
-  // pitch alteration (could do this in a more efficient way to reduce RAM usage)
-  float thisPitch = fabs((float)storedValues[PITCH] * (8.0f / 255.0f) - 4.0f);
-  float newKickFreq = thisPitch * (float)sample0_SAMPLERATE / (float)sample0_NUM_CELLS;
-  float newHatFreq = thisPitch * (float)sample1_SAMPLERATE / (float)sample1_NUM_CELLS;
-  float newSnareFreq = thisPitch * (float)sample2_SAMPLERATE / (float)sample2_NUM_CELLS;
-  float newRimFreq = thisPitch * (float)sample3_SAMPLERATE / (float)sample3_NUM_CELLS;
-  float newTomFreq = thisPitch * (float)sample4_SAMPLERATE / (float)sample4_NUM_CELLS;
+  // Pitch alteration (could do this in a more efficient way to reduce RAM usage)
+  float newKickFreq = (float)sample0_SAMPLERATE / (float)sample0_NUM_CELLS;
+  float newHatFreq = (float)sample1_SAMPLERATE / (float)sample1_NUM_CELLS;
+  float newSnareFreq = (float)sample2_SAMPLERATE / (float)sample2_NUM_CELLS;
+  float newRimFreq = (float)sample3_SAMPLERATE / (float)sample3_NUM_CELLS;
+  float newTomFreq = (float)sample4_SAMPLERATE / (float)sample4_NUM_CELLS;
   sample0.setFreq(newKickFreq);
   sample1.setFreq(newHatFreq);
   sample2.setFreq(newSnareFreq);
   sample3.setFreq(newRimFreq);
   sample4.setFreq(newTomFreq);
-  bool thisDirection = storedValues[PITCH] >= 128;
-  sample0.setDirection(thisDirection);
-  sample1.setDirection(thisDirection);
-  sample2.setDirection(thisDirection);
-  sample3.setDirection(thisDirection);
-  sample4.setDirection(thisDirection);
 
-  // bit crush! high value = clean (8 bits), low value = dirty (1 bit?)
-  paramCrush = 7 - (storedValues[CRUSH] >> 5);
-  crushCompensation = paramCrush;
-  if (paramCrush >= 6) crushCompensation--;
-  if (paramCrush >= 7) crushCompensation--;
+  sample0.setStart(0);
+  sample1.setStart(0);
+  sample2.setStart(0);
+  sample3.setStart(0);
+  sample4.setStart(0);
+  sample0.setEnd(sample0_NUM_CELLS);
+  sample1.setEnd(sample1_NUM_CELLS);
+  sample2.setEnd(sample2_NUM_CELLS);
+  sample3.setEnd(sample3_NUM_CELLS);
+  sample4.setEnd(sample4_NUM_CELLS);
 
-  // crop - a basic effect to chop off the end of each sample for a more staccato feel
-  paramCrop = storedValues[CROP];
-  sample0.setEnd(thisDirection ? map(paramCrop, 0, 255, 100, sample0_NUM_CELLS) : sample0_NUM_CELLS);
-  sample1.setEnd(thisDirection ? map(paramCrop, 0, 255, 100, sample1_NUM_CELLS) : sample1_NUM_CELLS);
-  sample2.setEnd(thisDirection ? map(paramCrop, 0, 255, 100, sample2_NUM_CELLS) : sample2_NUM_CELLS);
-  sample3.setEnd(thisDirection ? map(paramCrop, 0, 255, 100, sample3_NUM_CELLS) : sample3_NUM_CELLS);
-  sample4.setEnd(thisDirection ? map(paramCrop, 0, 255, 100, sample4_NUM_CELLS) : sample4_NUM_CELLS);
-  sample0.setStart(!thisDirection ? map(paramCrop, 255, 0, 100, sample0_NUM_CELLS) : 0);
-  sample1.setStart(!thisDirection ? map(paramCrop, 255, 0, 100, sample1_NUM_CELLS) : 0);
-  sample2.setStart(!thisDirection ? map(paramCrop, 255, 0, 100, sample2_NUM_CELLS) : 0);
-  sample3.setStart(!thisDirection ? map(paramCrop, 255, 0, 100, sample3_NUM_CELLS) : 0);
-  sample4.setStart(!thisDirection ? map(paramCrop, 255, 0, 100, sample4_NUM_CELLS) : 0);
+  paramBeat = 1;
 
-  //paramDrop = storedValues[DROP] >> 5; // range of 0 to 7
-  paramDrop = map(storedValues[DROP], 0, 256, 0, 9);
-
-  paramBeat = (NUM_BEATS * (int)storedValues[BEAT]) / 256;
-  if (paramBeat != previousBeat) {
-    if (!newStateLoaded) specialLedDisplay(paramBeat, false);  // display current beat number using LEDs
-    previousBeat = paramBeat;
-  }
   paramTempo = byteToTempo(storedValues[TEMPO]);
-  paramTimeSignature = map(storedValues[TIME_SIGNATURE], 0, 256, 1, MAX_BEATS_PER_BAR + 2);
-  if (paramTimeSignature != previousTimeSignature) {
-    if (!newStateLoaded) {
-      if (paramTimeSignature == MAX_BEATS_PER_BAR + 1) specialLedDisplay(B11111111, true);  // display current time signature using LEDs
-      else specialLedDisplay(paramTimeSignature - 1, false);                                // display current time signature using LEDs
-    }
-    previousTimeSignature = paramTimeSignature;
-  }
-  paramSwing = storedValues[SWING]; // Used to be divided by 86;  // gives range of 0 to 2
 
+  paramTimeSignature = map(TIME_SIGNATURE, 0, 256, 1, MAX_BEATS_PER_BAR + 2);
+
+  paramSwing = storedValues[SWING]; // Used to be divided by 86;  // gives range of 0 to 2
 }
 
 void updateParameters() {
-  paramBeat = (NUM_BEATS * (int)storedValues[BEAT]) / 256;
-  if (paramBeat != previousBeat) {
-    if (!newStateLoaded) specialLedDisplay(paramBeat, false);  // display current beat number using LEDs
-    previousBeat = paramBeat;
-  }
   paramTempo = byteToTempo(storedValues[TEMPO]);
-  D_println(paramTempo);
-  paramTimeSignature = map(storedValues[TIME_SIGNATURE], 0, 256, 1, MAX_BEATS_PER_BAR + 2);
-  if (paramTimeSignature != previousTimeSignature) {
-    if (!newStateLoaded) {
-      if (paramTimeSignature == MAX_BEATS_PER_BAR + 1) {
-        specialLedDisplay(B11111111, true);  // display current time signature using LEDs
-      } else {
-        specialLedDisplay(paramTimeSignature - 1, false);  // display current time signature using LEDs
-      }
-    }
-    previousTimeSignature = paramTimeSignature;
-  }
-  paramSwing = storedValues[SWING];  // Used to be divided by 86;  // gives range of 0 to 2
+  paramSwing = storedValues[SWING];
+  paramRandom = storedValues[RANDOM];
 }
 
 void startBeat() {
@@ -454,9 +384,7 @@ void stopBeat() {
 
 void playPulseHits() {
   for (byte i = 0; i < 5; i++) {
-    if (bitRead(dropRef[i], paramDrop)) {
-      calculateNote(i);
-    }
+    calculateNote(i);
   }
 }
 
@@ -493,7 +421,7 @@ void calculateNote(byte sampleNum) {
 
   byte yesNoRand = rand(0, 256);
   long randomVelocity = 0;
-  if (yesNoRand < paramChance) {
+  if (yesNoRand < paramRandom) {
     int lowerBound = paramMidpoint - paramRange / 2;
     int upperBound = paramMidpoint + paramRange / 2;
     randomVelocity = rand(lowerBound, upperBound);
@@ -569,7 +497,7 @@ int updateAudio() {
     ((sampleVolumes[2] * sample2.next()) >> atten) +
     ((sampleVolumes[3] * sample3.next()) >> atten) +
     ((sampleVolumes[4] * sample4.next()) >> atten);
-  asig = (asig >> paramCrush) << crushCompensation;
+  // asig = (asig >> paramCrush) << crushCompensation;
   return asig;
 }
 
@@ -700,20 +628,20 @@ void chooseBank(byte newBank) {
 
 void resetSessionToDefaults() {
   // Set starting values for each parameter
-  storedValues[CHANCE] = 128;
-  storedValues[ZOOM] = 150;
-  storedValues[RANGE] = 0;
-  storedValues[MIDPOINT] = 128;
+  storedValues[RANDOM] = 128;
+  // storedValues[ZOOM] = 150;
+  // storedValues[RANGE] = 0;
+  // storedValues[MIDPOINT] = 128;
 
-  storedValues[PITCH] = 160;
-  storedValues[CRUSH] = 255;
-  storedValues[CROP] = 255;
-  storedValues[DROP] = 128;
+  // storedValues[PITCH] = 160;
+  // storedValues[CRUSH] = 255;
+  // storedValues[CROP] = 255;
+  // storedValues[DROP] = 128;
 
-  storedValues[BEAT] = 0;
-  storedValues[TIME_SIGNATURE] = 64;  // equates to 4/4
+  // storedValues[BEAT] = 0;
+  // TIME_SIGNATURE = 64;  // equates to 4/4
   storedValues[SWING] = 128;
-  storedValues[TEMPO] = 90;  // actually equates to 120BPM
+  storedValues[TEMPO] = 72;  // actually equates to 120BPM
 
   newStateLoaded = true;
   setDefaults();
