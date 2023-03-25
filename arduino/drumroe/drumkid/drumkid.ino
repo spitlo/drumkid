@@ -1,6 +1,6 @@
 /*  DrumKid firmware V1.2
  *  This code should work for DrumKid boards from V6 onwards.
- *  It might work with earlier versions with a bit of tweaking :) 
+ *  It might work with earlier versions with a bit of tweaking :)
  */
 
 // Include debouncing library to make buttons work reliably
@@ -8,9 +8,9 @@
 
 // Include Mozzi library files for generating audio (custom version to allow reverse playback)
 #include "src/MozziDK/src/MozziGuts.h"
+#include "src/MozziDK/src/Oscil.h"
 #include "src/MozziDK/src/Sample.h"
 #include "src/MozziDK/src/mozzi_rand.h"
-#include "src/MozziDK/src/Oscil.h"
 #include "src/MozziDK/src/tables/saw256_int8.h"
 
 // Include drum beat pattern definition from separate file
@@ -37,7 +37,7 @@ Sample<sample4_NUM_CELLS, AUDIO_RATE> sample4(sample4_DATA);
 Bounce buttons[6];
 
 // Debugging (https://forum.arduino.cc/t/managing-serial-print-as-a-debug-tool/1024824)
-#define DEBUG 1  // SET TO 0 OUT TO REMOVE TRACES
+#define DEBUG 1 // SET TO 0 OUT TO REMOVE TRACES
 
 #if DEBUG
 #define D_SerialBegin(...) Serial.begin(__VA_ARGS__);
@@ -63,40 +63,43 @@ Bounce buttons[6];
 #define NUM_PARAM_GROUPS 1
 #define SAVED_STATE_SLOT_BYTES 24
 #define NUM_TAP_TIMES 8
-#define MAX_BEATS_PER_BAR 8
-#define MIN_SWING 0.5
-#define MAX_SWING 0.75
-#define TIME_SIGNATURE 64
+#define MAX_BEATS_PER_BAR 4
+#define MIN_SWING 0
+#define MAX_SWING 1
+// #define TIME_SIGNATURE 64
 
 // Define pin numbers
 // Keep pin 9 for audio, but others can be changed to suit your breadboard layout
-const byte ledPins[5] = { 2, 3, 11, 12, 13 };
-const byte buttonPins[6] = { 4, 5, 6, 7, 8, 10 };
-const byte analogPins[4] = { A0, A1, A2, A3 };
+const byte ledPins[5] = {2, 3, 11, 12, 13};
+const byte buttonPins[6] = {4, 5, 6, 7, 8, 10};
+const byte analogPins[4] = {A0, A1, A2, A3};
 
 // Various other global variables
-float nextPulseTime = 0.0;                                          // the time, in milliseconds, of the next pulse
-float msPerPulse = 20.8333;                                         // time for one "pulse" (there are 24 pulses per quarter note, as defined in MIDI spec)
-byte pulseNum = 0;                                                  // 0 to 23 (24ppqn, pulses per quarter note)
-unsigned int stepNum = 0;                                           // 0 to 95 (max one bar of 8 beats, aka 96 pulses)
-unsigned int numSteps;                                              // number of steps used - dependent on time signature
-unsigned int specialOffset = 0;                                     // number of steps to offset pattern in random time signature mode
-bool beatPlaying = false;                                           // true when beat is playing, false when not
-byte noteDown = B00000000;                                          // keeps track of whether a MIDI note is currently down or up
-bool syncReceived = false;                                          // has a sync/clock signal been received? (IMPROVE THIS LATER)
-byte midiNotes[NUM_SAMPLES];                                        // MIDI note numbers
-const byte defaultMidiNotes[NUM_SAMPLES] = { 36, 42, 38, 37, 43 };  // default MIDI note numbers
-byte midiNoteCommands[NUM_SAMPLES];                                 // MIDI note on commands
-byte sampleVolumes[NUM_SAMPLES] = { 0, 0, 0, 0, 0 };                // current sample volumes
-byte storedValues[NUM_PARAM_GROUPS * NUM_KNOBS];                    // analog knob values, one for each parameter (so the value can be remembered even after switching groups)
-byte firstLoop = true;                                              // allows special actions on first loop
-byte secondLoop = false;                                            // allows special actions on second loop
-byte controlSet = 0;                      // current active set of parameters
-byte knobLocked = B11111111;              // record whether a knob's value is currently "locked" (i.e. won't alter effect until moved by a threshold amount)
-byte analogValues[NUM_KNOBS];             // current analog (knob) values
-byte initValues[NUM_KNOBS];               // initial parameter values
-byte specialLedDisplayNum;                // binary number to display on LEDs (when needed)
-unsigned long specialLedDisplayTime = 0;  // the last time the LEDs were told to display a number
+float nextPulseTime = 0.0; // the time, in milliseconds, of the next pulse
+float msPerPulse =
+    20.8333; // time for one "pulse" (there are 24 pulses per quarter note, as defined in MIDI spec)
+byte pulseNum = 0;           // 0 to 23 (24ppqn, pulses per quarter note)
+unsigned int stepNum = 0;    // 0 to 95 (max one bar of 8 beats, aka 96 pulses)
+unsigned int numSteps;       // number of steps used - dependent on time signature
+bool beatPlaying = false;    // true when beat is playing, false when not
+byte noteDown = B00000000;   // keeps track of whether a MIDI note is currently down or up
+bool syncReceived = false;   // has a sync/clock signal been received? (IMPROVE THIS LATER)
+byte midiNotes[NUM_SAMPLES]; // MIDI note numbers
+const byte defaultMidiNotes[NUM_SAMPLES] = {36, 42, 38, 37, 43}; // default MIDI note numbers
+byte midiNoteCommands[NUM_SAMPLES];                              // MIDI note on commands
+byte sampleVolumes[NUM_SAMPLES] = {0, 0, 0, 0, 0};               // current sample volumes
+byte storedValues[NUM_PARAM_GROUPS *
+                  NUM_KNOBS]; // analog knob values, one for each parameter (so the value can be
+                              // remembered even after switching groups)
+byte firstLoop = true;        // allows special actions on first loop
+byte secondLoop = false;      // allows special actions on second loop
+byte controlSet = 0;          // current active set of parameters
+byte knobLocked = B11111111;  // record whether a knob's value is currently "locked" (i.e. won't
+                              // alter effect until moved by a threshold amount)
+byte analogValues[NUM_KNOBS]; // current analog (knob) values
+byte initValues[NUM_KNOBS];   // initial parameter values
+byte specialLedDisplayNum;    // binary number to display on LEDs (when needed)
+unsigned long specialLedDisplayTime = 0; // the last time the LEDs were told to display a number
 
 // save/load variables
 bool readyToChooseSaveSlot = false;
@@ -112,17 +115,11 @@ byte nextTapIndex = 0;
 
 // Parameter variables, each with a range of 0-255 unless otherwise noted
 byte paramRandom;
-int paramMidpoint;  // -255 to 255
-int paramRange;     // 0 to 510
-byte paramBeat;           // 0 to 23 (24 beats in total)
-byte paramTimeSignature;  // 1 to 13 (3/4, 4/4, 5/4, 6/4, 7/4)
+int paramMidpoint;       // -255 to 255
+int paramRange;          // 0 to 510
+byte paramTimeSignature; // 12 to 16
 float paramTempo;
-byte paramSwing = 0;  // 0 to 2 (0=straight, 1=approx quintuplet swing, 2=triplet swing)
-
-// special global variables needed for certain parameters
-// byte crushCompensation;
-byte previousBeat;
-byte previousTimeSignature;
+float paramSwing = 0.5; // 0 to 1 (50%=straight, 66%=triplet swing etc)
 
 #define MIN_TEMPO 40
 #define MAX_TEMPO 295
@@ -137,34 +134,18 @@ byte previousTimeSignature;
 #define TEMPO 1
 #define RANDOM 2
 
-// define root notes
-float rootNotes[13] = {
-  138.5913155f,
-  146.832384f,
-  155.5634919f,
-  164.8137785f,
-  174.6141157f,
-  184.9972114f,
-  195.997718f,
-  207.6523488f,
-  220.0f,
-  233.0818808f,
-  246.9416506f,
-  261.6255653f,
-  277.182631f,
-};
-
 void setup() {
   byte i;
 
-  checkEepromScheme();  // write defaults to memory if not previously done
+  checkEepromScheme(); // write defaults to memory if not previously done
   initialiseSettings(false);
 
   for (i = 0; i < NUM_LEDS; i++) {
-    pinMode(ledPins[i], OUTPUT);  // set LED pins as outputs
+    pinMode(ledPins[i], OUTPUT); // set LED pins as outputs
   }
 
-  randSeed((long)analogRead(4) * analogRead(5));  // A4 and A5 should be floating, use to seed random numbers
+  randSeed((long)analogRead(4) *
+           analogRead(5)); // A4 and A5 should be floating, use to seed random numbers
   startMozzi(CONTROL_RATE);
 
   // Initialise all buttons using Bounce2 library
@@ -176,15 +157,13 @@ void setup() {
   // Set starting values for each parameter
   resetSessionToDefaults();
 
-  Serial.begin(31250);    // begin serial communication for MIDI input/output
-  D_SerialBegin(115200);  // And for debugging
+  Serial.begin(31250);   // begin serial communication for MIDI input/output
+  D_SerialBegin(115200); // And for debugging
 
-  flashLeds();  // do a brief LED light show to show the unit is working
+  flashLeds(); // do a brief LED light show to show the unit is working
 }
 
 byte buttonsPressed = 0;
-byte buttonGroup = 0;
-byte lastButtonsPressed = 0;
 byte menuState = 0;
 
 void updateControl() {
@@ -198,7 +177,6 @@ void updateControl() {
   }
   for (i = 0; i < 6; i++) {
     bitWrite(buttonsPressed, i, !buttons[i].read());
-    buttonGroup = buttonsPressed | buttonGroup;
   }
 
   // Start/stop
@@ -251,7 +229,6 @@ void updateControl() {
 
   controlSet = 0;
 
-  lastButtonsPressed = buttonsPressed;
   controlSetChanged = (prevControlSet != controlSet);
 
   msPerPulse = 2500.0 / paramTempo;
@@ -271,7 +248,8 @@ void updateControl() {
 
   for (i = 0; i < NUM_KNOBS; i++) {
     if (firstLoop) {
-      byte dummyReading = mozziAnalogRead(analogPins[i]);  // need to read pin once because first reading is not accurate
+      byte dummyReading = mozziAnalogRead(
+          analogPins[i]); // need to read pin once because first reading is not accurate
     } else {
       analogValues[i] = mozziAnalogRead(analogPins[i]) >> 2;
     }
@@ -294,6 +272,7 @@ void updateControl() {
         storedValues[NUM_KNOBS * controlSet + i] = analogValues[i];
       }
     }
+    storedValues[NUM_KNOBS * controlSet + i] = analogValues[i];
   }
 
   updateParameters();
@@ -311,12 +290,11 @@ void updateControl() {
 }
 
 void doPulseActions() {
-  Serial.write(0xF8);  // MIDI clock
+  Serial.write(0xF8); // MIDI clock
   cancelMidiNotes();
   if (pulseNum % 24 == 0) {
     if (stepNum == 0) {
-      numSteps = paramTimeSignature * 24;  // 24 pulses per beat
-      specialOffset = 0;
+      numSteps = paramTimeSignature * 24; // 24 pulses per beat
     }
   }
   playPulseHits();
@@ -326,7 +304,6 @@ void doPulseActions() {
 }
 
 void setDefaults() {
-  paramRandom = storedValues[RANDOM];
   paramRange = 300;
   paramMidpoint = 0;
 
@@ -353,13 +330,12 @@ void setDefaults() {
   sample3.setEnd(sample3_NUM_CELLS);
   sample4.setEnd(sample4_NUM_CELLS);
 
-  paramBeat = 1;
+  paramTimeSignature = 4; // For now... could be 3 as well, right? Or 3, 3.25, 3.5, 3.75 and 4?
 
-  paramTempo = byteToTempo(storedValues[TEMPO]);
-
-  paramTimeSignature = map(TIME_SIGNATURE, 0, 256, 1, MAX_BEATS_PER_BAR + 2);
-
-  paramSwing = storedValues[SWING]; // Used to be divided by 86;  // gives range of 0 to 2
+  paramTempo = 72;
+  paramSwing = 128;
+  paramRandom = 0;
+  // updateParameters();
 }
 
 void updateParameters() {
@@ -373,12 +349,12 @@ void startBeat() {
   pulseNum = 0;
   stepNum = 0;
   nextPulseTime = millis();
-  Serial.write(0xFA);  // MIDI clock start
+  Serial.write(0xFA); // MIDI clock start
 }
 
 void stopBeat() {
   beatPlaying = false;
-  Serial.write(0xFC);  // MIDI clock stop
+  Serial.write(0xFC); // MIDI clock stop
   syncReceived = false;
 }
 
@@ -388,68 +364,177 @@ void playPulseHits() {
   }
 }
 
+bool readNote(int sample, int sixteenth) {
+  return beat[sample][sixteenth] == 1;
+}
+
 void calculateNote(byte sampleNum) {
   long thisVelocity = 0;
-  // first, check for notes which are defined in the beat
-  unsigned int effectiveStepNum = stepNum;
-  // D_println(paramSwing); // 0-255
-  // D_println(stepNum); // 0-95
-  // if (paramSwing == 1) {
-  //   if (stepNum % 12 == 6) effectiveStepNum = stepNum - 1;  // arbitrary...
-  //   if (stepNum % 12 == 7) effectiveStepNum = stepNum - 1;
-  // } else if (paramSwing == 2) {
-  //   if (stepNum % 12 == 6) effectiveStepNum = stepNum - 1;  // arbitrary...
-  //   if (stepNum % 12 == 8) effectiveStepNum = stepNum - 2;
-  // }
-  // effectiveStepNum = (specialOffset + effectiveStepNum) % 192;
+  // First, check for notes which are defined in the beat
+  // unsigned int effectiveStepNum = stepNum;
   // Roger Linn swing. 50% is completely straight on the sixteenth
-  // 100% would be (almost) on the next sixteenth.
+  // 100% would be (almost?) on the next sixteenth.
+  // Normalize swing (0-255) to a number ranging from MIN_SWING to MAX_SWING
+  // (Swing is described as 0-1 where 0.5 is of course 50%)
   float normalizedSwing = normalize(paramSwing, 0, 255, MIN_SWING, MAX_SWING);
-  // D_println(normalizedSwing);
-  int swingAmount = (int)normalize(normalizedSwing, MIN_SWING, MAX_SWING, 0, 23);
+  // Calculate how many pulses to shift
+  // int shiftAmount = (int)map(normalizedSwing, MIN_SWING, MAX_SWING, 0, 23);
   // This function hits on every pulse, then checks backwards (accounting for swing)
   // if there is a note for this sample, in this beat, on the step this pulse represents.
-  // So if
-  // D_println(swingAmount);
-  if (effectiveStepNum % 6 == 0) {
-    // beats only defined down to 16th notes not 32nd, hence %2 (CHANGE COMMENT)
-    byte beatByte = pgm_read_byte(&beats[paramBeat][sampleNum][effectiveStepNum / 48]);  // 48...? was 16
-    if (bitRead(beatByte, 7 - ((effectiveStepNum / 6) % 8))) {
+  // So what do we know?
+  // Every first, third etc sixteenth are always played on beat.
+  // And 2, 4, 6 etc are played with "swing".
+  // So if we get here, and pulse is 0 or 12 (24? 36?), and there is a corresponding note for
+  // that sample and step, just play it.
+  // If pulse is 6-11 or 18-23 we’re in swing territory.
+  // We need to calculate what step the swing % makes that number correspond to
+  // and check if there is a note there.
+  // If swing is 50%, that means no swing, so on pulse 6 a check should show if there
+  // is a corresponding sixteenth.
+  // But if swing is <> 50%, we shouldn’t check pulse 6, we should check on one of the other
+  // pulses, right?
+  // We need a function that takes pulse and swing and decides whether to do a check against
+  // the pattern. No, a function that takes pulse and swing and returns the place in the beat
+  // array to check if there is a note there. Or, depending on the random value, play one anyhow.
+
+  if (stepNum % 12 == 0) {
+    // This is one of the always straight steps
+    // D_print("Straight, sixteenth = ");
+    // D_println(stepNum / 6);
+    // D_print("Note or not? --- ");
+    // D_println(beat[sampleNum][stepNum / 6] ? "Yes" : "No");
+    if (readNote(sampleNum, stepNum / 6)) {
       thisVelocity = 255;
+    }
+  } else {
+    unsigned int sixteenth = 0;
+
+    // clang-format off
+    // if (
+    //   // (normalizedSwing < 0.05  && stepNum % 12 ==  0) ||
+    //   (normalizedSwing < 0.16  && stepNum % 12 ==  1) ||
+    //   (normalizedSwing < 0.27  && stepNum % 12 ==  2) ||
+    //   (normalizedSwing < 0.36  && stepNum % 12 ==  3) ||
+    //   (normalizedSwing < 0.43  && stepNum % 12 ==  4) ||
+    //   (normalizedSwing < 0.50  && stepNum % 12 ==  5) ||
+    //   (normalizedSwing == 0.50 && stepNum % 12 ==  6) ||
+    //   (normalizedSwing < 0.62  && stepNum % 12 ==  7) ||
+    //   (normalizedSwing < 0.72  && stepNum % 12 ==  8) ||
+    //   (normalizedSwing < 0.81  && stepNum % 12 ==  9) ||
+    //   (normalizedSwing < 0.90  && stepNum % 12 == 10) ||
+    //   (normalizedSwing >= 0.90 && stepNum % 12 == 11)
+    // ) {
+    //   sixteenth = stepNum / (stepNum % 12);
+    // }
+    // clang-format on
+    // if (sampleNum == 1 && sixteenth > 0) {
+    //   D_print("Sixteenth: ");
+    //   D_println(sixteenth);
+    //   D_print("Crooked, stepNum = ");
+    //   D_print(stepNum);
+    //   D_print(" ------- Pulsenum: ");
+    //   D_println(pulseNum);
+    //   D_print("Swing: ");
+    //   D_print(paramSwing);
+    //   D_print(" :::::::::::::: Swing norm: ");
+    //   D_println(normalizedSwing);
+    // }
+
+    if (normalizedSwing < 0.16) {
+      if (stepNum % 12 == 1) {
+        sixteenth = stepNum / (stepNum % 12);
+      }
+    } else if (normalizedSwing < 0.27) {
+      if (stepNum % 12 == 2) {
+        sixteenth = stepNum / (stepNum % 12);
+      }
+    } else if (normalizedSwing < 0.36) {
+      if (stepNum % 12 == 3) {
+        sixteenth = stepNum / (stepNum % 12);
+      }
+    } else if (normalizedSwing < 0.43) {
+      if (stepNum % 12 == 4) {
+        sixteenth = stepNum / (stepNum % 12);
+      }
+    } else if (normalizedSwing < 0.50) {
+      if (stepNum % 12 == 5) {
+        sixteenth = stepNum / (stepNum % 12);
+      }
+    } else if (normalizedSwing == 0.50) {
+      if (stepNum % 12 == 6) {
+        sixteenth = stepNum / (stepNum % 12);
+      }
+    } else if (normalizedSwing < 0.62) {
+      if (stepNum % 12 == 7) {
+        sixteenth = stepNum / (stepNum % 12);
+      }
+    } else if (normalizedSwing < 0.72) {
+      if (stepNum % 12 == 8) {
+        sixteenth = stepNum / (stepNum % 12);
+      }
+    } else if (normalizedSwing < 0.81) {
+      if (stepNum % 12 == 9) {
+        sixteenth = stepNum / (stepNum % 12);
+      }
+    } else if (normalizedSwing < 0.90) {
+      if (stepNum % 12 == 10) {
+        sixteenth = stepNum / (stepNum % 12);
+      }
+    } else if (normalizedSwing >= 0.90) {
+      if (stepNum % 12 == 11) {
+        sixteenth = stepNum / (stepNum % 12);
+      }
+    }
+
+    if (sixteenth > 0) {
+      if (readNote(sampleNum, sixteenth)) {
+        // if (sampleNum == 1) {
+        //   // D_print("Found note for hat on sixtenth: ");
+        //   // D_println(sixteenth - 1);
+        // }
+        if (normalizedSwing == 0.50) {
+          // D_println("Triggering straight note");
+          thisVelocity = 255;
+        } else {
+          // D_println("Triggering shifted note");
+          thisVelocity = rand(240, 255);
+        }
+      } else {
+        byte yesNoRand = rand(0, 256);
+        long randomVelocity = 0;
+        if (yesNoRand < paramRandom) {
+          int lowerBound = paramMidpoint - paramRange / 2;
+          int upperBound = paramMidpoint + paramRange / 2;
+          randomVelocity = rand(lowerBound, upperBound);
+          randomVelocity = constrain(randomVelocity, -255, 255);
+        }
+        thisVelocity += randomVelocity;
+      }
     }
   }
 
-  byte yesNoRand = rand(0, 256);
-  long randomVelocity = 0;
-  if (yesNoRand < paramRandom) {
-    int lowerBound = paramMidpoint - paramRange / 2;
-    int upperBound = paramMidpoint + paramRange / 2;
-    randomVelocity = rand(lowerBound, upperBound);
-    randomVelocity = constrain(randomVelocity, -255, 255);
-  }
-  thisVelocity += randomVelocity;
   thisVelocity = constrain(thisVelocity, 0, 255);
   triggerNote(sampleNum, thisVelocity);
 }
 
 void triggerNote(byte sampleNum, byte velocity) {
-  if (velocity > 8) {  // don't bother with very quiet notes
+  if (velocity > 8) { // don't bother with very quiet notes
     switch (sampleNum) {
-      case 0:
-        sample0.start();
-        break;
-      case 1:
-        sample1.start();
-        break;
-      case 2:
-        sample2.start();
-        break;
-      case 3:
-        sample3.start();
-        break;
-      case 4:
-        sample4.start();
-        break;
+    case 0:
+      sample0.start();
+      break;
+    case 1:
+      sample1.start();
+      break;
+    case 2:
+      sample2.start();
+      break;
+    case 3:
+      sample3.start();
+      break;
+    case 4:
+      sample4.start();
+      break;
     }
     sampleVolumes[sampleNum] = velocity;
     bitWrite(noteDown, sampleNum, true);
@@ -458,9 +543,9 @@ void triggerNote(byte sampleNum, byte velocity) {
 }
 
 void playMidiNote(byte sampleNum, byte velocity) {
-  Serial.write(midiNoteCommands[sampleNum]);  // note down command
-  Serial.write(midiNotes[sampleNum]);         // note number
-  Serial.write(velocity >> 1);                // velocity (scaled down to MIDI standard, 0-127)
+  Serial.write(midiNoteCommands[sampleNum]); // note down command
+  Serial.write(midiNotes[sampleNum]);        // note number
+  Serial.write(velocity >> 1);               // velocity (scaled down to MIDI standard, 0-127)
 }
 
 void incrementPulse() {
@@ -481,9 +566,10 @@ void cancelMidiNotes() {
   byte i;
   for (i = 0; i < NUM_SAMPLES; i++) {
     if (bitRead(noteDown, i)) {
-      Serial.write(midiNoteCommands[i]);  // note down command (zero velocity is equivalent to note up)
-      Serial.write(midiNotes[i]);         // note number
-      Serial.write(0x00);                 // zero velocity
+      Serial.write(
+          midiNoteCommands[i]);   // note down command (zero velocity is equivalent to note up)
+      Serial.write(midiNotes[i]); // note number
+      Serial.write(0x00);         // zero velocity
       bitWrite(noteDown, i, false);
     }
   }
@@ -491,12 +577,11 @@ void cancelMidiNotes() {
 
 const byte atten = 9;
 int updateAudio() {
-  char asig = (
-    (sampleVolumes[0] * sample0.next()) >> atten) +
-    ((sampleVolumes[1] * sample1.next()) >> atten) +
-    ((sampleVolumes[2] * sample2.next()) >> atten) +
-    ((sampleVolumes[3] * sample3.next()) >> atten) +
-    ((sampleVolumes[4] * sample4.next()) >> atten);
+  char asig = ((sampleVolumes[0] * sample0.next()) >> atten) +
+              ((sampleVolumes[1] * sample1.next()) >> atten) +
+              ((sampleVolumes[2] * sample2.next()) >> atten) +
+              ((sampleVolumes[3] * sample3.next()) >> atten) +
+              ((sampleVolumes[4] * sample4.next()) >> atten);
   // asig = (asig >> paramCrush) << crushCompensation;
   return asig;
 }
@@ -547,7 +632,7 @@ void loop() {
       currentMidiByte++;
     }
   }
-  audioHook();  // main Mozzi function, calls updateAudio and updateControl
+  audioHook(); // main Mozzi function, calls updateAudio and updateControl
 }
 
 void flashLeds() {
@@ -569,10 +654,14 @@ void updateLeds() {
     // show desired binary number for certain parameters where visual feedback is helpful
     displayLedNum(specialLedDisplayNum);
   } else if (beatPlaying && menuState == 0) {
-    //if(stepNum==0||(paramTimeSignature==4&&stepNum==96)||(paramTimeSignature==6&&stepNum==72)) displayLedNum(B00000011);
-    if (stepNum == 0) displayLedNum(B00000011);
-    else if (stepNum % 24 == 0) displayLedNum(B00000010);
-    else if (stepNum % 24 == 3) displayLedNum(B00000000);
+    // if(stepNum==0||(paramTimeSignature==4&&stepNum==96)||(paramTimeSignature==6&&stepNum==72))
+    // displayLedNum(B00000011);
+    if (stepNum == 0)
+      displayLedNum(B00000011);
+    else if (stepNum % 24 == 0)
+      displayLedNum(B00000010);
+    else if (stepNum % 24 == 3)
+      displayLedNum(B00000000);
   } else {
     displayLedNum(B00000000);
   }
@@ -629,19 +718,8 @@ void chooseBank(byte newBank) {
 void resetSessionToDefaults() {
   // Set starting values for each parameter
   storedValues[RANDOM] = 128;
-  // storedValues[ZOOM] = 150;
-  // storedValues[RANGE] = 0;
-  // storedValues[MIDPOINT] = 128;
-
-  // storedValues[PITCH] = 160;
-  // storedValues[CRUSH] = 255;
-  // storedValues[CROP] = 255;
-  // storedValues[DROP] = 128;
-
-  // storedValues[BEAT] = 0;
-  // TIME_SIGNATURE = 64;  // equates to 4/4
   storedValues[SWING] = 128;
-  storedValues[TEMPO] = 72;  // actually equates to 120BPM
+  storedValues[TEMPO] = 72;
 
   newStateLoaded = true;
   setDefaults();
@@ -673,12 +751,11 @@ void saveParams(byte slotNum) {
 
 // prior to firmware version 1.1, no way of knowing whether older firmware was previously installed
 // from V1.1 onwards, new special address beyond the 864 bytes reserved for storing sessions
-// Slot 864-865: if these bytes have values 119 and 206 respectively, we are using the new memory system (1 in 65,025 chance of these being randomly correct)
-// Slot 866: current version (0 = V1.1, 1 = V1.2)
-// Slots 867-871: reserved for other version stuff if needed
-// Slots 872-879: MIDI note numbers for channels 1 through 5 (and another 3 reserved)
-// Slots 880-887: MIDI channel numbers for channels 1 through 5 (and another 3 reserved)
-// Slots 888+: free for future features
+// Slot 864-865: if these bytes have values 119 and 206 respectively, we are using the new memory
+// system (1 in 65,025 chance of these being randomly correct) Slot 866: current version (0 = V1.1,
+// 1 = V1.2) Slots 867-871: reserved for other version stuff if needed Slots 872-879: MIDI note
+// numbers for channels 1 through 5 (and another 3 reserved) Slots 880-887: MIDI channel numbers for
+// channels 1 through 5 (and another 3 reserved) Slots 888+: free for future features
 
 void checkEepromScheme() {
   byte i;
@@ -688,7 +765,8 @@ void checkEepromScheme() {
     // all good, already using the new EEPROM scheme
 
     // update firmware version in memory if needed
-    if (EEPROM.read(866) != 1) EEPROM.write(866, 1);
+    if (EEPROM.read(866) != 1)
+      EEPROM.write(866, 1);
   } else {
     // prepare EEPROM for new scheme
     EEPROM.write(864, 119);
@@ -697,7 +775,8 @@ void checkEepromScheme() {
     // write default MIDI note/channel settings
     for (i = 0; i < NUM_SAMPLES; i++) {
       EEPROM.write(872 + i, defaultMidiNotes[i]);
-      EEPROM.write(880 + i, 9);  // channel 10 (actually 9 because zero-indexed) is default channel to use
+      EEPROM.write(880 + i,
+                   9); // channel 10 (actually 9 because zero-indexed) is default channel to use
     }
   }
 }
