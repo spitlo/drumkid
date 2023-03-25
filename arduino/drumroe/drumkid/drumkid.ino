@@ -7,11 +7,13 @@
 #include "src/Bounce2/src/Bounce2.h"
 
 // Include Mozzi library files for generating audio (custom version to allow reverse playback)
+#include "src/MozziDK/src/LowPassFilter.h"
 #include "src/MozziDK/src/MozziGuts.h"
 #include "src/MozziDK/src/Oscil.h"
 #include "src/MozziDK/src/Sample.h"
 #include "src/MozziDK/src/mozzi_rand.h"
-#include "src/MozziDK/src/tables/saw256_int8.h"
+// #include "src/MozziDK/src/tables/saw256_int8.h"
+#include "src/MozziDK/src/tables/cos256_int8.h"
 
 // Include drum beat pattern definition from separate file
 #include "beats.h"
@@ -29,6 +31,10 @@ Sample<sample1_NUM_CELLS, AUDIO_RATE> sample1(sample1_DATA);
 Sample<sample2_NUM_CELLS, AUDIO_RATE> sample2(sample2_DATA);
 Sample<sample3_NUM_CELLS, AUDIO_RATE> sample3(sample3_DATA);
 Sample<sample4_NUM_CELLS, AUDIO_RATE> sample4(sample4_DATA);
+
+// Filter
+Oscil<COS256_NUM_CELLS, CONTROL_RATE> kFilterMod(COS256_DATA);
+LowPassFilter rf;
 
 // Include EEPROM library for saving data
 #include <EEPROM.h>
@@ -72,11 +78,12 @@ Bounce buttons[6];
 #error "Tempo must have a range of exactly 255 otherwise I'll have to write more code"
 #endif
 
-// define which knob controls which parameter
-// e.g. 0 is group 1 knob 1, 6 is group 2 knob 3
+// Define which knob controls which parameter
+// E.g. 0 is group 1 knob 1, 6 is group 2 knob 3
 #define SWING 0
 #define TEMPO 1
 #define RANDOM 2
+#define SLOP 3
 
 // Define pin numbers
 // Keep pin 9 for audio, but others can be changed to suit your breadboard layout
@@ -125,12 +132,17 @@ float tapTimes[NUM_TAP_TIMES];
 byte nextTapIndex = 0;
 
 // Parameter variables, each with a range of 0-255 unless otherwise noted
-byte paramRandom;
 int paramMidpoint;       // -255 to 255
 int paramRange;          // 0 to 510
 byte paramTimeSignature; // 12 to 16
-float paramTempo;
-float paramSwing = 0.5; // 0 to 1 (50%=straight, 66%=triplet swing etc)
+byte paramCrush;
+byte paramFilter;
+byte crushCompensation;
+byte paramSwing; // 0 to 1 (50%=straight, 66%=triplet swing etc)
+byte paramTempo;
+byte paramRandom;
+byte paramSlop;
+bool doSlop = false;
 
 void setup() {
   byte i;
@@ -145,6 +157,8 @@ void setup() {
   randSeed((long)analogRead(4) *
            analogRead(5)); // A4 and A5 should be floating, use to seed random numbers
   startMozzi(CONTROL_RATE);
+
+  kFilterMod.setFreq(1.1f);
 
   // Initialise all buttons using Bounce2 library
   for (i = 0; i < NUM_BUTTONS; i++) {
@@ -305,40 +319,64 @@ void setDefaults() {
   paramRange = 300;
   paramMidpoint = 0;
 
-  // Pitch alteration (could do this in a more efficient way to reduce RAM usage)
-  float newKickFreq = (float)sample0_SAMPLERATE / (float)sample0_NUM_CELLS;
-  float newHatFreq = (float)sample1_SAMPLERATE / (float)sample1_NUM_CELLS;
-  float newSnareFreq = (float)sample2_SAMPLERATE / (float)sample2_NUM_CELLS;
-  float newRimFreq = (float)sample3_SAMPLERATE / (float)sample3_NUM_CELLS;
-  float newTomFreq = (float)sample4_SAMPLERATE / (float)sample4_NUM_CELLS;
-  sample0.setFreq(newKickFreq);
-  sample1.setFreq(newHatFreq);
-  sample2.setFreq(newSnareFreq);
-  sample3.setFreq(newRimFreq);
-  sample4.setFreq(newTomFreq);
-
-  sample0.setStart(0);
-  sample1.setStart(0);
-  sample2.setStart(0);
-  sample3.setStart(0);
-  sample4.setStart(0);
-  sample0.setEnd(sample0_NUM_CELLS);
-  sample1.setEnd(sample1_NUM_CELLS);
-  sample2.setEnd(sample2_NUM_CELLS);
-  sample3.setEnd(sample3_NUM_CELLS);
-  sample4.setEnd(sample4_NUM_CELLS);
-
   paramTimeSignature = 4; // For now... could be 3 as well, right? Or 3, 3.25, 3.5, 3.75 and 4?
 
   paramTempo = 72;
   paramSwing = 128;
   paramRandom = 128;
+  paramSlop = 128;
 }
 
 void updateParameters() {
   paramTempo = byteToTempo(storedValues[TEMPO]);
   paramSwing = storedValues[SWING];
   paramRandom = storedValues[RANDOM];
+  paramSlop = storedValues[SLOP];
+
+  float normalizedSlop = normalize(paramSlop, 0, 255, 0.8, -0.8);
+
+  doSlop = paramSlop < 124 || paramSlop > 132;
+
+  // Pitch alteration (could do this in a more efficient way to reduce RAM usage)
+  float newKickFreq = (float)sample0_SAMPLERATE / (float)sample0_NUM_CELLS;
+  float newHatFreq = (float)sample1_SAMPLERATE / (float)sample1_NUM_CELLS;
+  float newSnareFreq = (float)sample2_SAMPLERATE / (float)sample2_NUM_CELLS;
+  float newRimFreq = (float)sample3_SAMPLERATE / (float)sample3_NUM_CELLS;
+  float newTomFreq = (float)sample4_SAMPLERATE / (float)sample4_NUM_CELLS;
+  sample0.setFreq(doSlop ? newKickFreq - normalizedSlop : newKickFreq);
+  sample1.setFreq(doSlop ? newHatFreq - normalizedSlop : newHatFreq);
+  sample2.setFreq(doSlop ? newSnareFreq - normalizedSlop : newSnareFreq);
+  sample3.setFreq(doSlop ? newRimFreq - normalizedSlop : newRimFreq);
+  sample4.setFreq(doSlop ? newTomFreq - normalizedSlop : newTomFreq);
+
+  sample0.setStart(doSlop ? 0 + (normalizedSlop / 3) : 0);
+  sample1.setStart(doSlop ? 0 + (normalizedSlop / 3) : 0);
+  sample2.setStart(doSlop ? 0 + (normalizedSlop / 3) : 0);
+  sample3.setStart(doSlop ? 0 + (normalizedSlop / 3) : 0);
+  sample4.setStart(doSlop ? 0 + (normalizedSlop / 3) : 0);
+  sample0.setEnd(sample0_NUM_CELLS);
+  sample1.setEnd(sample1_NUM_CELLS);
+  sample2.setEnd(sample2_NUM_CELLS);
+  sample3.setEnd(sample3_NUM_CELLS);
+  sample4.setEnd(sample4_NUM_CELLS);
+
+  if (doSlop) {
+    // Bit crush! high value = clean (8 bits), low value = dirty (1 bit?)
+    paramCrush = (paramSlop >> 7);
+    crushCompensation = paramCrush;
+    if (paramCrush >= 6) {
+      crushCompensation--;
+    }
+    if (paramCrush >= 7) {
+      crushCompensation--;
+    }
+
+    // Filter
+    paramFilter = 64 - (paramSlop >> 1);
+    D_println(paramFilter);
+    byte cutoff_freq = paramFilter + kFilterMod.next() / 2;
+    rf.setCutoffFreq(cutoff_freq);
+  }
 }
 
 void startBeat() {
@@ -454,10 +492,7 @@ void calculateNote(byte sampleNum) {
         // to play note or note.
         if (normalizedRandomicity < 0) {
           int yesNoRand = rand(-128, 0);
-          D_print(yesNoRand, " ");
-          D_println(normalizedRandomicity);
           if (yesNoRand > normalizedRandomicity) {
-            D_print("::::: Quiet");
             thisVelocity = 0;
           }
         }
@@ -483,7 +518,7 @@ void calculateNote(byte sampleNum) {
 }
 
 void triggerNote(byte sampleNum, byte velocity) {
-  if (velocity > 8) { // don't bother with very quiet notes
+  if (velocity > 8) { // Don't bother with very quiet notes
     switch (sampleNum) {
     case 0:
       sample0.start();
@@ -508,9 +543,9 @@ void triggerNote(byte sampleNum, byte velocity) {
 }
 
 void playMidiNote(byte sampleNum, byte velocity) {
-  Serial.write(midiNoteCommands[sampleNum]); // note down command
-  Serial.write(midiNotes[sampleNum]);        // note number
-  Serial.write(velocity >> 1);               // velocity (scaled down to MIDI standard, 0-127)
+  Serial.write(midiNoteCommands[sampleNum]); // Note down command
+  Serial.write(midiNotes[sampleNum]);        // Note number
+  Serial.write(velocity >> 1);               // Velocity (scaled down to MIDI standard, 0-127)
 }
 
 void incrementPulse() {
@@ -532,9 +567,9 @@ void cancelMidiNotes() {
   for (i = 0; i < NUM_SAMPLES; i++) {
     if (bitRead(noteDown, i)) {
       Serial.write(
-          midiNoteCommands[i]);   // note down command (zero velocity is equivalent to note up)
-      Serial.write(midiNotes[i]); // note number
-      Serial.write(0x00);         // zero velocity
+          midiNoteCommands[i]);   // Note down command (zero velocity is equivalent to note up)
+      Serial.write(midiNotes[i]); // Note number
+      Serial.write(0x00);         // Zero velocity
       bitWrite(noteDown, i, false);
     }
   }
@@ -547,8 +582,8 @@ int updateAudio() {
               ((sampleVolumes[2] * sample2.next()) >> atten) +
               ((sampleVolumes[3] * sample3.next()) >> atten) +
               ((sampleVolumes[4] * sample4.next()) >> atten);
-  // asig = (asig >> paramCrush) << crushCompensation;
-  return asig;
+  asig = (asig >> paramCrush) << crushCompensation;
+  return doSlop ? rf.next(asig) : asig;
 }
 
 byte thisMidiByte;
@@ -558,10 +593,10 @@ void loop() {
   while (Serial.available()) {
     thisMidiByte = Serial.read();
     if (bitRead(thisMidiByte, 7)) {
-      // status byte
+      // Status byte
       midiBytes[0] = thisMidiByte;
       if (thisMidiByte == 0xFA) {
-        // clock start signal received
+        // Clock start signal received
         startBeat();
       } else if (thisMidiByte == 0xFB) {
         // clock continue signal received
