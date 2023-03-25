@@ -53,7 +53,7 @@ Bounce buttons[6];
 
 // Mozzi control rate, measured in Hz, must be power of 2
 // Try to keep this value as high as possible (256 is good) but reduce if having performance issues
-#define CONTROL_RATE 128
+#define CONTROL_RATE 256
 
 // Define various values
 #define NUM_KNOBS 4
@@ -63,10 +63,20 @@ Bounce buttons[6];
 #define NUM_PARAM_GROUPS 1
 #define SAVED_STATE_SLOT_BYTES 24
 #define NUM_TAP_TIMES 8
-#define MAX_BEATS_PER_BAR 4
-#define MIN_SWING 0
-#define MAX_SWING 1
-// #define TIME_SIGNATURE 64
+#define MIN_SWING 0.25
+#define MAX_SWING 0.75
+#define MIN_TEMPO 40
+#define MAX_TEMPO 295
+
+#if MIN_TEMPO + 255 != MAX_TEMPO
+#error "Tempo must have a range of exactly 255 otherwise I'll have to write more code"
+#endif
+
+// define which knob controls which parameter
+// e.g. 0 is group 1 knob 1, 6 is group 2 knob 3
+#define SWING 0
+#define TEMPO 1
+#define RANDOM 2
 
 // Define pin numbers
 // Keep pin 9 for audio, but others can be changed to suit your breadboard layout
@@ -75,7 +85,8 @@ const byte buttonPins[6] = {4, 5, 6, 7, 8, 10};
 const byte analogPins[4] = {A0, A1, A2, A3};
 
 // Various other global variables
-float nextPulseTime = 0.0; // the time, in milliseconds, of the next pulse
+float swingIncrement = 0.082; // MAX_SWING - MIN_SWING / 11;
+float nextPulseTime = 0.0;    // the time, in milliseconds, of the next pulse
 float msPerPulse =
     20.8333; // time for one "pulse" (there are 24 pulses per quarter note, as defined in MIDI spec)
 byte pulseNum = 0;           // 0 to 23 (24ppqn, pulses per quarter note)
@@ -120,19 +131,6 @@ int paramRange;          // 0 to 510
 byte paramTimeSignature; // 12 to 16
 float paramTempo;
 float paramSwing = 0.5; // 0 to 1 (50%=straight, 66%=triplet swing etc)
-
-#define MIN_TEMPO 40
-#define MAX_TEMPO 295
-
-#if MIN_TEMPO + 255 != MAX_TEMPO
-#error "Tempo must have a range of exactly 255 otherwise I'll have to write more code"
-#endif
-
-// define which knob controls which parameter
-// e.g. 0 is group 1 knob 1, 6 is group 2 knob 3
-#define SWING 0
-#define TEMPO 1
-#define RANDOM 2
 
 void setup() {
   byte i;
@@ -334,8 +332,7 @@ void setDefaults() {
 
   paramTempo = 72;
   paramSwing = 128;
-  paramRandom = 0;
-  // updateParameters();
+  paramRandom = 128;
 }
 
 void updateParameters() {
@@ -365,98 +362,57 @@ void playPulseHits() {
 }
 
 bool readNote(int sample, int sixteenth) {
+  // This function will later read the 16x5 button matrix through
+  // a cluster of MCP23017-E/SP I/O expanders.
+  // For now, just read the multidimensional array in beats.h
   return beat[sample][sixteenth] == 1;
 }
 
 void calculateNote(byte sampleNum) {
+  // Default to not playing audibly
   long thisVelocity = 0;
-  // First, check for notes which are defined in the beat
-  // unsigned int effectiveStepNum = stepNum;
-  // Roger Linn swing. 50% is completely straight on the sixteenth
-  // 100% would be (almost?) on the next sixteenth.
   // Normalize swing (0-255) to a number ranging from MIN_SWING to MAX_SWING
   // (Swing is described as 0-1 where 0.5 is of course 50%)
   float normalizedSwing = normalize(paramSwing, 0, 255, MIN_SWING, MAX_SWING);
-  // Calculate how many pulses to shift
-  // int shiftAmount = (int)map(normalizedSwing, MIN_SWING, MAX_SWING, 0, 23);
+  // Normalize randomicity to a number between -128 and 128. Negative numbers
+  // mean we subtract existing notes randomly. Positive numbers mean we add
+  // non-existing notes randomly.
+  float normalizedRandomicity = normalize(paramRandom, 0, 255, -128, 128);
   // This function hits on every pulse, then checks backwards (accounting for swing)
   // if there is a note for this sample, in this beat, on the step this pulse represents.
-  // So what do we know?
-  // Every first, third etc sixteenth are always played on beat.
-  // And 2, 4, 6 etc are played with "swing".
-  // So if we get here, and pulse is 0 or 12 (24? 36?), and there is a corresponding note for
-  // that sample and step, just play it.
-  // If pulse is 6-11 or 18-23 we’re in swing territory.
-  // We need to calculate what step the swing % makes that number correspond to
-  // and check if there is a note there.
-  // If swing is 50%, that means no swing, so on pulse 6 a check should show if there
-  // is a corresponding sixteenth.
-  // But if swing is <> 50%, we shouldn’t check pulse 6, we should check on one of the other
-  // pulses, right?
-  // We need a function that takes pulse and swing and decides whether to do a check against
-  // the pattern. No, a function that takes pulse and swing and returns the place in the beat
-  // array to check if there is a note there. Or, depending on the random value, play one anyhow.
-
   if (stepNum % 12 == 0) {
-    // This is one of the always straight steps
-    // D_print("Straight, sixteenth = ");
-    // D_println(stepNum / 6);
-    // D_print("Note or not? --- ");
-    // D_println(beat[sampleNum][stepNum / 6] ? "Yes" : "No");
     if (readNote(sampleNum, stepNum / 6)) {
       thisVelocity = 255;
     }
+    // If we’re in subtractive randomicity, throw the dice on whether
+    // to play note or note.
+    if (normalizedRandomicity < 0) {
+      int yesNoRand = rand(-128, 0);
+      if (yesNoRand > normalizedRandomicity) {
+        thisVelocity = 0;
+      }
+    }
   } else {
+    // Calculate what actual sixteenth this pulse represents based on
+    // what percentage of swing we’re working in.
     unsigned int sixteenth = 0;
-
-    // clang-format off
-    // if (
-    //   // (normalizedSwing < 0.05  && stepNum % 12 ==  0) ||
-    //   (normalizedSwing < 0.16  && stepNum % 12 ==  1) ||
-    //   (normalizedSwing < 0.27  && stepNum % 12 ==  2) ||
-    //   (normalizedSwing < 0.36  && stepNum % 12 ==  3) ||
-    //   (normalizedSwing < 0.43  && stepNum % 12 ==  4) ||
-    //   (normalizedSwing < 0.50  && stepNum % 12 ==  5) ||
-    //   (normalizedSwing == 0.50 && stepNum % 12 ==  6) ||
-    //   (normalizedSwing < 0.62  && stepNum % 12 ==  7) ||
-    //   (normalizedSwing < 0.72  && stepNum % 12 ==  8) ||
-    //   (normalizedSwing < 0.81  && stepNum % 12 ==  9) ||
-    //   (normalizedSwing < 0.90  && stepNum % 12 == 10) ||
-    //   (normalizedSwing >= 0.90 && stepNum % 12 == 11)
-    // ) {
-    //   sixteenth = stepNum / (stepNum % 12);
-    // }
-    // clang-format on
-    // if (sampleNum == 1 && sixteenth > 0) {
-    //   D_print("Sixteenth: ");
-    //   D_println(sixteenth);
-    //   D_print("Crooked, stepNum = ");
-    //   D_print(stepNum);
-    //   D_print(" ------- Pulsenum: ");
-    //   D_println(pulseNum);
-    //   D_print("Swing: ");
-    //   D_print(paramSwing);
-    //   D_print(" :::::::::::::: Swing norm: ");
-    //   D_println(normalizedSwing);
-    // }
-
-    if (normalizedSwing < 0.16) {
+    if (normalizedSwing < swingIncrement * 1) {
       if (stepNum % 12 == 1) {
         sixteenth = stepNum / (stepNum % 12);
       }
-    } else if (normalizedSwing < 0.27) {
+    } else if (normalizedSwing < swingIncrement * 2) {
       if (stepNum % 12 == 2) {
         sixteenth = stepNum / (stepNum % 12);
       }
-    } else if (normalizedSwing < 0.36) {
+    } else if (normalizedSwing < swingIncrement * 3) {
       if (stepNum % 12 == 3) {
         sixteenth = stepNum / (stepNum % 12);
       }
-    } else if (normalizedSwing < 0.43) {
+    } else if (normalizedSwing < swingIncrement * 4) {
       if (stepNum % 12 == 4) {
         sixteenth = stepNum / (stepNum % 12);
       }
-    } else if (normalizedSwing < 0.50) {
+    } else if (normalizedSwing < swingIncrement * 5) {
       if (stepNum % 12 == 5) {
         sixteenth = stepNum / (stepNum % 12);
       }
@@ -464,51 +420,60 @@ void calculateNote(byte sampleNum) {
       if (stepNum % 12 == 6) {
         sixteenth = stepNum / (stepNum % 12);
       }
-    } else if (normalizedSwing < 0.62) {
+    } else if (normalizedSwing < swingIncrement * 7) {
       if (stepNum % 12 == 7) {
         sixteenth = stepNum / (stepNum % 12);
       }
-    } else if (normalizedSwing < 0.72) {
+    } else if (normalizedSwing < swingIncrement * 8) {
       if (stepNum % 12 == 8) {
         sixteenth = stepNum / (stepNum % 12);
       }
-    } else if (normalizedSwing < 0.81) {
+    } else if (normalizedSwing < swingIncrement * 9) {
       if (stepNum % 12 == 9) {
         sixteenth = stepNum / (stepNum % 12);
       }
-    } else if (normalizedSwing < 0.90) {
+    } else if (normalizedSwing < swingIncrement * 10) {
       if (stepNum % 12 == 10) {
         sixteenth = stepNum / (stepNum % 12);
       }
-    } else if (normalizedSwing >= 0.90) {
+    } else if (normalizedSwing >= swingIncrement * 11) {
       if (stepNum % 12 == 11) {
         sixteenth = stepNum / (stepNum % 12);
       }
     }
 
     if (sixteenth > 0) {
-      if (readNote(sampleNum, sixteenth)) {
-        // if (sampleNum == 1) {
-        //   // D_print("Found note for hat on sixtenth: ");
-        //   // D_println(sixteenth - 1);
-        // }
+      if (readNote(sampleNum, sixteenth - 1)) {
         if (normalizedSwing == 0.50) {
-          // D_println("Triggering straight note");
           thisVelocity = 255;
         } else {
-          // D_println("Triggering shifted note");
+          // Swing notes get a little velocity flair
           thisVelocity = rand(240, 255);
         }
-      } else {
-        byte yesNoRand = rand(0, 256);
-        long randomVelocity = 0;
-        if (yesNoRand < paramRandom) {
-          int lowerBound = paramMidpoint - paramRange / 2;
-          int upperBound = paramMidpoint + paramRange / 2;
-          randomVelocity = rand(lowerBound, upperBound);
-          randomVelocity = constrain(randomVelocity, -255, 255);
+        // If we’re in subtractive randomicity, throw the dice on whether
+        // to play note or note.
+        if (normalizedRandomicity < 0) {
+          int yesNoRand = rand(-128, 0);
+          D_print(yesNoRand, " ");
+          D_println(normalizedRandomicity);
+          if (yesNoRand > normalizedRandomicity) {
+            D_print("::::: Quiet");
+            thisVelocity = 0;
+          }
         }
-        thisVelocity += randomVelocity;
+      } else {
+        // Only do this if we’re in additive randomicity
+        if (normalizedRandomicity > 0) {
+          byte yesNoRand = rand(0, 128);
+          long randomVelocity = 0;
+          if (yesNoRand < paramRandom) {
+            int lowerBound = paramMidpoint - paramRange / 2;
+            int upperBound = paramMidpoint + paramRange / 2;
+            randomVelocity = rand(lowerBound, upperBound);
+            randomVelocity = constrain(randomVelocity, -255, 255);
+          }
+          thisVelocity += randomVelocity;
+        }
       }
     }
   }
