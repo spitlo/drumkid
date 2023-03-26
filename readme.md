@@ -28,3 +28,7 @@ Version 4 was the first successful working design, with full code, schematics, G
 Version 5 contained various PCB errors and has been superseded.
 
 Versions 6 onwards were used in the final product, with version 10 being the latest at the time of writing.
+
+### To do
+
+ - [ ] Try switching to 96 ppqn
