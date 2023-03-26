@@ -74,10 +74,6 @@ Bounce buttons[6];
 #define MIN_TEMPO 50
 #define MAX_TEMPO 200
 
-// #if MIN_TEMPO + 255 != MAX_TEMPO
-// #error "Tempo must have a range of exactly 255 otherwise I'll have to write more code"
-// #endif
-
 // Define which knob controls which parameter
 // E.g. 0 is group 1 knob 1, 6 is group 2 knob 3
 #define SWING 0
@@ -321,7 +317,7 @@ void setDefaults() {
 
   paramTimeSignature = 4; // For now... could be 3 as well, right? Or 3, 3.25, 3.5, 3.75 and 4?
 
-  paramTempo = 72;
+  paramTempo = 128;
   paramSwing = 128;
   paramRandom = 128;
   paramSlop = 128;
@@ -361,19 +357,12 @@ void updateParameters() {
   sample4.setEnd(sample4_NUM_CELLS);
 
   if (doSlop) {
-    // Bit crush! high value = clean (8 bits), low value = dirty (1 bit?)
-    paramCrush = (paramSlop >> 7);
+    // Bit crush!
+    paramCrush = 5 - (paramSlop >> 6);
     crushCompensation = paramCrush;
-    if (paramCrush >= 6) {
-      crushCompensation--;
-    }
-    if (paramCrush >= 7) {
-      crushCompensation--;
-    }
 
     // Filter
     paramFilter = 64 - (paramSlop >> 1);
-    D_println(paramFilter);
     byte cutoff_freq = paramFilter + kFilterMod.next() / 2;
     rf.setCutoffFreq(cutoff_freq);
   }
@@ -454,7 +443,7 @@ void calculateNote(byte sampleNum) {
       if (stepNum % 12 == 5) {
         sixteenth = stepNum / (stepNum % 12);
       }
-    } else if (normalizedSwing == 0.50) {
+    } else if (normalizedSwing > 0.49 && normalizedSwing < 0.51) {
       if (stepNum % 12 == 6) {
         sixteenth = stepNum / (stepNum % 12);
       }
@@ -654,8 +643,6 @@ void updateLeds() {
     // show desired binary number for certain parameters where visual feedback is helpful
     displayLedNum(specialLedDisplayNum);
   } else if (beatPlaying && menuState == 0) {
-    // if(stepNum==0||(paramTimeSignature==4&&stepNum==96)||(paramTimeSignature==6&&stepNum==72))
-    // displayLedNum(B00000011);
     if (stepNum == 0)
       displayLedNum(B00000011);
     else if (stepNum % 24 == 0)
@@ -688,32 +675,19 @@ void specialLedDisplay(byte displayNum, bool isBinary) {
 
 float byteToTempo(byte tempoByte) {
   float tempoFloat;
-  // if (tempoByte <= 192) {
-  //   tempoFloat = 10.0 + tempoByte;
-  // } else {
-  //   tempoFloat = 202.0 + 12.66667 * (tempoByte - 192.0);
-  // }
   // Do this naively and probably stupidly until I understand the math above.
   // 40-295 is way too broad a range for my tempo needs.
   tempoFloat = normalize((float)tempoByte, 0, 255, MIN_TEMPO, MAX_TEMPO);
   // If this does not work, could we simply half the tempo?
   // So that a range of 80 to 336 would amount to a bpm of 40 to 168?
-  // D_print("tempoFloat: ");
-  // D_println(tempoFloat);
+  tempoFloat = floor(tempoFloat * 10.) / 10.;
   return tempoFloat;
 }
 
 byte tempoToByte(float tempoFloat) {
   byte tempoByte;
-  // if (tempoFloat <= 202.0) {
-  //   tempoByte = ((byte)tempoFloat) - 10;
-  // } else {
-  //   tempoByte = (byte)((tempoFloat - 202.0) / 12.66667) + 192;
-  // }
   // See comments above
   tempoByte = (byte)normalize(tempoFloat, MIN_TEMPO, MAX_TEMPO, 0, 255);
-  // D_print("tempoByte: ");
-  // D_println(tempoByte);
   return tempoByte;
 }
 
@@ -730,7 +704,8 @@ void resetSessionToDefaults() {
   // Set starting values for each parameter
   storedValues[RANDOM] = 128;
   storedValues[SWING] = 128;
-  storedValues[TEMPO] = 72;
+  storedValues[TEMPO] = 128;
+  storedValues[SLOP] = 128;
 
   newStateLoaded = true;
   setDefaults();
