@@ -59,7 +59,7 @@ Bounce buttons[6];
 
 // Mozzi control rate, measured in Hz, must be power of 2
 // Try to keep this value as high as possible (256 is good) but reduce if having performance issues
-#define CONTROL_RATE 256
+#define CONTROL_RATE 128
 
 // Define various values
 #define NUM_KNOBS 4
@@ -71,12 +71,12 @@ Bounce buttons[6];
 #define NUM_TAP_TIMES 8
 #define MIN_SWING 0.25
 #define MAX_SWING 0.75
-#define MIN_TEMPO 40
-#define MAX_TEMPO 295
+#define MIN_TEMPO 50
+#define MAX_TEMPO 200
 
-#if MIN_TEMPO + 255 != MAX_TEMPO
-#error "Tempo must have a range of exactly 255 otherwise I'll have to write more code"
-#endif
+// #if MIN_TEMPO + 255 != MAX_TEMPO
+// #error "Tempo must have a range of exactly 255 otherwise I'll have to write more code"
+// #endif
 
 // Define which knob controls which parameter
 // E.g. 0 is group 1 knob 1, 6 is group 2 knob 3
@@ -688,21 +688,32 @@ void specialLedDisplay(byte displayNum, bool isBinary) {
 
 float byteToTempo(byte tempoByte) {
   float tempoFloat;
-  if (tempoByte <= 192) {
-    tempoFloat = 10.0 + tempoByte;
-  } else {
-    tempoFloat = 202.0 + 12.66667 * (tempoByte - 192.0);
-  }
+  // if (tempoByte <= 192) {
+  //   tempoFloat = 10.0 + tempoByte;
+  // } else {
+  //   tempoFloat = 202.0 + 12.66667 * (tempoByte - 192.0);
+  // }
+  // Do this naively and probably stupidly until I understand the math above.
+  // 40-295 is way too broad a range for my tempo needs.
+  tempoFloat = normalize((float)tempoByte, 0, 255, MIN_TEMPO, MAX_TEMPO);
+  // If this does not work, could we simply half the tempo?
+  // So that a range of 80 to 336 would amount to a bpm of 40 to 168?
+  // D_print("tempoFloat: ");
+  // D_println(tempoFloat);
   return tempoFloat;
 }
 
 byte tempoToByte(float tempoFloat) {
   byte tempoByte;
-  if (tempoFloat <= 202.0) {
-    tempoByte = ((byte)tempoFloat) - 10;
-  } else {
-    tempoByte = (byte)((tempoFloat - 202.0) / 12.66667) + 192;
-  }
+  // if (tempoFloat <= 202.0) {
+  //   tempoByte = ((byte)tempoFloat) - 10;
+  // } else {
+  //   tempoByte = (byte)((tempoFloat - 202.0) / 12.66667) + 192;
+  // }
+  // See comments above
+  tempoByte = (byte)normalize(tempoFloat, MIN_TEMPO, MAX_TEMPO, 0, 255);
+  // D_print("tempoByte: ");
+  // D_println(tempoByte);
   return tempoByte;
 }
 
